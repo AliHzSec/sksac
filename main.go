@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -21,7 +22,7 @@ import (
 	"github.com/projectdiscovery/gologger/levels"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 const (
 	ansiGreen  = "\x1b[32m"
@@ -235,6 +236,7 @@ func checkSSHAccess(target Target, keyPath string, debug bool) (bool, error) {
 	addr := target.Host + ":" + target.Port
 
 	args := []string{
+		"-v",
 		"-i", keyPath,
 		"-o", "IdentitiesOnly=yes",
 		"-o", "StrictHostKeyChecking=no",
@@ -246,7 +248,10 @@ func checkSSHAccess(target Target, keyPath string, debug bool) (bool, error) {
 		"exit",
 	}
 
-	cmd := exec.Command("ssh", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	output, err := cmd.CombinedOutput()
 	outputStr := strings.TrimSpace(string(output))
 
@@ -258,30 +263,9 @@ func checkSSHAccess(target Target, keyPath string, debug bool) (bool, error) {
 	}
 
 	_ = addr
+	_ = err
 
-	if err != nil {
-		exitErr, ok := err.(*exec.ExitError)
-		if ok {
-			// exit code 255 = SSH error (connection refused, permission denied, etc.)
-			// exit code 1 = remote command failed (but connected!)
-			// exit code 0 = success
-			exitCode := exitErr.ExitCode()
-			if exitCode == 1 {
-				// Connected but 'exit' returned 1 — still means we have access
-				return true, nil
-			}
-		}
-		// Permission denied or connection error
-		if strings.Contains(outputStr, "Permission denied") ||
-			strings.Contains(outputStr, "publickey") {
-			return false, nil
-		}
-		// Connection timeout/refused — treat as error
-		return false, nil
-	}
-
-	// exit code 0 = connected and exited cleanly
-	return true, nil
+	return strings.Contains(outputStr, "/.ssh/authorized_keys"), nil
 }
 
 func formatDuration(d time.Duration) string {
